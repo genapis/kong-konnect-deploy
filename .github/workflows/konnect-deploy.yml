@@ -1,0 +1,191 @@
+name: Konnect API Builder Workflow
+
+on:
+  workflow_call:
+    inputs:
+      region:
+        description: 'Konnect region (e.g., us, eu, au, me, in)'
+        required: true
+        type: string
+        default: 'eu'
+
+jobs:
+  deploy-api:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install required tools
+        run: |
+          # Install yq
+          echo "Installing yq..."
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod a+x /usr/local/bin/yq
+          
+          # Install jq
+          echo "Installing jq..."
+          sudo apt-get update && sudo apt-get install -y jq
+          
+          # Verify curl installation
+          echo "Verifying curl..."
+          if ! command -v curl &> /dev/null; then
+              sudo apt-get install -y curl
+          fi
+          
+          # Verify all tools
+          echo "Verifying installed tools..."
+          curl --version || exit 1
+          yq --version || exit 1
+          jq --version || exit 1
+          echo "✅ All required tools are installed and verified"
+
+      - name: Install Insomnia CLI
+        run: |
+          npm install -g @insomnia/inso
+
+      - name: Install decK
+        run: |
+          echo "Installing decK..."
+          curl -sL https://github.com/kong/deck/releases/latest/download/deck_1.17.1_linux_amd64.tar.gz -o deck.tar.gz
+          tar -xf deck.tar.gz
+          sudo cp deck /usr/local/bin/
+          # Verify decK installation
+          deck version || exit 1
+          echo "✅ decK installed and verified"
+          
+      - name: Sync Kong configuration
+        env:
+          DECK_KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
+          KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE_URL }}
+        run: |
+          deck sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-control-plane "$KONNECT_CONTROL_PLANE_URL" --state kong.yml
+
+      - name: Run API Tests
+        env:
+          INSOMNIA_API_URL: ${{ vars.KONNECT_RUNTIME_URL }}
+        run: |
+          # Run all test suites from the Insomnia file
+          inso run test insomnia.json --env production
+          
+      - name: Report Test Results
+        if: always()
+        run: |
+          if [ $? -eq 0 ]; then
+            echo "API Tests passed successfully!"
+          else
+            echo "API Tests failed!"
+            exit 1
+          fi
+
+      - name: Deploy to Portal
+        env:
+          KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
+          KONNECT_PORTAL_URL: ${{ vars.KONNECT_PORTAL_URL }}
+        run: |
+            #!/bin/bash
+
+            # Script to create an API, add documentation, add specification (version), and publish to a portal in Konnect.
+            # Designed to run in a GitHub Action environment.
+            # Uses environment variables: KONNECT_TOKEN, PORTAL_ID, REGION
+            # Dependencies: curl, jq
+
+            set -e # Exit on any error
+
+            # Validate environment variables
+            if [ -z "$KONNECT_TOKEN" ] || [ -z "$PORTAL_ID" ] || [ -z "$REGION" ]; then
+                echo "::error::Missing required environment variables: KONNECT_TOKEN, PORTAL_ID, or REGION"
+                exit 1
+            fi
+
+            BASE_URL="https://${REGION}.api.konghq.com/v3"
+
+            # Sample API data
+            API_NAME="MySampleAPI"
+            API_VERSION="v1"
+            API_SLUG="my-sample-api-v1"
+            API_DESCRIPTION="A sample API for demonstration."
+
+            # Sample Documentation data
+            DOC_TITLE="Getting Started"
+            DOC_SLUG="getting-started"
+            DOC_CONTENT="# Getting Started with $API_NAME\n\nThis is a sample markdown document."
+            DOC_STATUS="published"
+
+            # Sample OpenAPI Specification (minimal valid OAS 3.0)
+            SPEC_VERSION=$(yq eval '.info.version' openapi.yml)
+            SPEC_CONTENT=$(cat openapi.yml)
+
+            # Publication data
+            PUBLISH_VISIBILITY="public"
+
+            # Function to make API calls with curl and handle responses
+            call_api() {
+                METHOD="$1"
+                ENDPOINT="$2"
+                BODY="$3"
+                echo "::group::API Call: $METHOD $ENDPOINT"
+                RESPONSE=$(curl -s -w "\n%{http_code}" -X "$METHOD" \
+                    -H "Authorization: Bearer $KONNECT_TOKEN" \
+                    -H "Content-Type: application/json" \
+                    --data "$BODY" \
+                    "$BASE_URL$ENDPOINT")
+                HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+                BODY_RESPONSE=$(echo "$RESPONSE" | sed -e '$d')
+                if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+                    echo "::error::HTTP $HTTP_CODE - $BODY_RESPONSE"
+                    exit 1
+                fi
+                echo "$BODY_RESPONSE"
+                echo "::endgroup::"
+            }
+
+            echo "::group::Step 1: Creating API"
+            CREATE_API_BODY='{
+            "name": "'"$API_NAME"'",
+            "version": "'"$API_VERSION"'",
+            "slug": "'"$API_SLUG"'",
+            "description": "'"$API_DESCRIPTION"'"
+            }'
+            API_RESPONSE=$(call_api "POST" "/apis" "$CREATE_API_BODY")
+            API_ID=$(echo "$API_RESPONSE" | jq -r '.id')
+            echo "API created with ID: $API_ID"
+            echo "::endgroup::"
+
+            echo "::group::Step 2: Adding API Documentation"
+            CREATE_DOC_BODY='{
+            "title": "'"$DOC_TITLE"'",
+            "slug": "'"$DOC_SLUG"'",
+            "status": "'"$DOC_STATUS"'",
+            "content": "'"$DOC_CONTENT"'"
+            }'
+            DOC_RESPONSE=$(call_api "POST" "/apis/$API_ID/documents" "$CREATE_DOC_BODY")
+            DOC_ID=$(echo "$DOC_RESPONSE" | jq -r '.id')
+            echo "Documentation added with ID: $DOC_ID"
+            echo "::endgroup::"
+
+            echo "::group::Step 3: Adding API Specification (Version)"
+            CREATE_VERSION_BODY='{
+            "version": "'"$SPEC_VERSION"'",
+            "spec": {
+                "content": '"$(echo "$SPEC_CONTENT" | jq -c .)"'
+            }
+            }'
+            VERSION_RESPONSE=$(call_api "POST" "/apis/$API_ID/versions" "$CREATE_VERSION_BODY")
+            VERSION_ID=$(echo "$VERSION_RESPONSE" | jq -r '.id')
+            echo "Version added with ID: $VERSION_ID"
+            echo "::endgroup::"
+
+            echo "::group::Step 4: Publishing API to Portal"
+            PUBLISH_BODY='{
+            "visibility": "'"$PUBLISH_VISIBILITY"'"
+            }'
+            PUBLISH_RESPONSE=$(call_api "PUT" "/apis/$API_ID/publications/$PORTAL_ID" "$PUBLISH_BODY")
+            echo "API published to Portal: $PUBLISH_RESPONSE"
+            echo "::endgroup::"
+
+            echo "All steps completed successfully!"
+            # Output the portal URL for verification
+            echo "✨ API Documentation is now published!"
+            echo "Visit: $KONNECT_PORTAL_URL/specs/$SPEC_ID to view your API documentation"
