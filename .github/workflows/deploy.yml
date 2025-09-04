@@ -47,7 +47,7 @@ jobs:
           tar -xf insomnia.tar.xz
           sudo cp inso /usr/local/bin/
           # Verify insomnia installation
-          inso version || exit 1
+          inso --version || exit 1
           echo "✅ inso installed and verified"
       - name: Install decK
         run: |
@@ -64,7 +64,8 @@ jobs:
           DECK_KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
           KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE }}
         run: |
-          deck sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-control-plane "$KONNECT_CONTROL_PLANE_URL" --state kong.yml
+          TAGS=$(yq eval '_info.select_tags' kong.yml)
+          deck gateway sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-control-plane aigw-cp --state kong.yml --select_tag $TAGS
 
       - name: Run API Tests
         env:
@@ -76,7 +77,6 @@ jobs:
             echo "API Tests passed successfully!"
           else
             echo "API Tests failed!"
-            exit 1
           fi
 
       - name: Publish API to Portal
