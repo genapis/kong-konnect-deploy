@@ -64,7 +64,7 @@ jobs:
           DECK_KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
           KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE }}
         run: |
-          TAGS=$(yq eval '_info.select_tags' kong.yml)
+          TAGS=$(yq eval '._info.select_tags' kong.yml)
           deck gateway sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-control-plane aigw-cp --state kong.yml --select_tag $TAGS
 
       - name: Run API Tests
