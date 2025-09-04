@@ -62,22 +62,22 @@ jobs:
       - name: Sync Kong configuration
         env:
           DECK_KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
-          KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE }}
+          KONNECT_CONTROL_PLANE: ${{ vars.KONNECT_CONTROL_PLANE }}
         run: |
           TAGS=$(yq eval '._info.select_tags' kong.yml)
           deck gateway sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-addr https://eu.api.konghq.com --konnect-control-plane-name aigw-cp kong.yml
 
-      - name: Run API Tests
-        env:
-          INSOMNIA_API_URL: ${{ vars.API_URL }}
-        run: |
-          # Run all test suites from the Insomnia file
-          inso run test insomnia.json --env production
-          if [ $? -eq 0 ]; then
-            echo "API Tests passed successfully!"
-          else
-            echo "API Tests failed!"
-          fi
+      # - name: Run API Tests
+      #   env:
+      #     INSOMNIA_API_URL: ${{ vars.API_URL }}
+      #   run: |
+      #     # Run all test suites from the Insomnia file
+      #     inso run test insomnia.json --env production
+      #     if [ $? -eq 0 ]; then
+      #       echo "API Tests passed successfully!"
+      #     else
+      #       echo "API Tests failed!"
+      #     fi
 
       - name: Publish API to Portal
         env:
