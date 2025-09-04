@@ -3,7 +3,7 @@ name: Konnect API Builder Workflow
 on:
   workflow_call:
     inputs:
-      region:
+      REGION:
         description: 'Konnect region (e.g., us, eu, au, me, in)'
         required: true
         type: string
@@ -43,8 +43,12 @@ jobs:
 
       - name: Install Insomnia CLI
         run: |
-          npm install -g @insomnia/inso
-
+          curl -sL https://github.com/Kong/insomnia/releases/download/core%4011.5.0/inso-linux-x64-11.5.0.tar.xz -o insomnia.tar.xz
+          tar -xf insomnia.tar.xz
+          sudo cp inso /usr/local/bin/
+          # Verify insomnia installation
+          inso version || exit 1
+          echo "✅ inso installed and verified"
       - name: Install decK
         run: |
           echo "Installing decK..."
@@ -58,20 +62,16 @@ jobs:
       - name: Sync Kong configuration
         env:
           DECK_KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
-          KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE_URL }}
+          KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE }}
         run: |
           deck sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-control-plane "$KONNECT_CONTROL_PLANE_URL" --state kong.yml
 
       - name: Run API Tests
         env:
-          INSOMNIA_API_URL: ${{ vars.KONNECT_RUNTIME_URL }}
+          INSOMNIA_API_URL: ${{ vars.API_URL }}
         run: |
           # Run all test suites from the Insomnia file
           inso run test insomnia.json --env production
-          
-      - name: Report Test Results
-        if: always()
-        run: |
           if [ $? -eq 0 ]; then
             echo "API Tests passed successfully!"
           else
@@ -79,10 +79,10 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy to Portal
+      - name: Publish API to Portal
         env:
           KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
-          KONNECT_PORTAL_URL: ${{ vars.KONNECT_PORTAL_URL }}
+          PORTAL_ID: ${{ secrets.PORTAL_ID }}
         run: |
             #!/bin/bash
 
@@ -102,9 +102,9 @@ jobs:
             BASE_URL="https://${REGION}.api.konghq.com/v3"
 
             # Sample API data
-            API_NAME="MySampleAPI"
-            API_VERSION="v1"
-            API_SLUG="my-sample-api-v1"
+            API_NAME=$(yq eval '.info.title' openapi.yml)
+            API_VERSION=$(yq eval '.info.version' openapi.yml)
+            API_SLUG=$API_NAME | tr '[:upper:]' '[:lower:]' | tr ' ' '-'
             API_DESCRIPTION="A sample API for demonstration."
 
             # Sample Documentation data
@@ -153,17 +153,17 @@ jobs:
             echo "API created with ID: $API_ID"
             echo "::endgroup::"
 
-            echo "::group::Step 2: Adding API Documentation"
-            CREATE_DOC_BODY='{
-            "title": "'"$DOC_TITLE"'",
-            "slug": "'"$DOC_SLUG"'",
-            "status": "'"$DOC_STATUS"'",
-            "content": "'"$DOC_CONTENT"'"
-            }'
-            DOC_RESPONSE=$(call_api "POST" "/apis/$API_ID/documents" "$CREATE_DOC_BODY")
-            DOC_ID=$(echo "$DOC_RESPONSE" | jq -r '.id')
-            echo "Documentation added with ID: $DOC_ID"
-            echo "::endgroup::"
+            # echo "::group::Step 2: Adding API Documentation"
+            # CREATE_DOC_BODY='{
+            # "title": "'"$DOC_TITLE"'",
+            # "slug": "'"$DOC_SLUG"'",
+            # "status": "'"$DOC_STATUS"'",
+            # "content": "'"$DOC_CONTENT"'"
+            # }'
+            # DOC_RESPONSE=$(call_api "POST" "/apis/$API_ID/documents" "$CREATE_DOC_BODY")
+            # DOC_ID=$(echo "$DOC_RESPONSE" | jq -r '.id')
+            # echo "Documentation added with ID: $DOC_ID"
+            # echo "::endgroup::"
 
             echo "::group::Step 3: Adding API Specification (Version)"
             CREATE_VERSION_BODY='{
@@ -188,4 +188,4 @@ jobs:
             echo "All steps completed successfully!"
             # Output the portal URL for verification
             echo "✨ API Documentation is now published!"
-            echo "Visit: $KONNECT_PORTAL_URL/specs/$SPEC_ID to view your API documentation"
+            echo "You can view it at: https://developer.apiprimer.com"
