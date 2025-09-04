@@ -83,6 +83,7 @@ jobs:
         env:
           KONNECT_TOKEN: ${{ secrets.KONNECT_TOKEN }}
           PORTAL_ID: ${{ secrets.PORTAL_ID }}
+          REGION: ${{ inputs.REGION }}
         run: |
             #!/bin/bash
 
