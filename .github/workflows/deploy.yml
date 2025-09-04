@@ -65,7 +65,7 @@ jobs:
           KONNECT_CONTROL_PLANE_URL: ${{ vars.KONNECT_CONTROL_PLANE }}
         run: |
           TAGS=$(yq eval '._info.select_tags' kong.yml)
-          deck gateway sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-control-plane aigw-cp --state kong.yml --select_tag $TAGS
+          deck gateway sync --konnect-token "$DECK_KONNECT_TOKEN" --konnect-addr https://eu.api.konghq.com --konnect-control-plane-name aigw-cp --state kong.yml --select_tag $TAGS
 
       - name: Run API Tests
         env:
