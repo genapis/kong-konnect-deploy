@@ -120,15 +120,11 @@ jobs:
             RESPONSE=$(http --print=hb -A bearer -a "$KONNECT_TOKEN" "$BASE_URL/apis" <<< "$CREATE_API_BODY")
             STATUS_CODE=$(echo "$RESPONSE" | head -n 1 | awk '{print $2}')
             RESPONSE_BODY=$(echo "$RESPONSE" | awk '/\{/{p=1} p')
-            echo $RESPONSE
-            echo $STATUS_CODE
-            echo $RESPONSE_BODY
 
             if [ "$STATUS_CODE" -eq 201 ]; then
                 echo "Request successful! Status code: $STATUS_CODE"
                 # Parse JSON response body using jq (if JSON)
                 API_ID=$(echo "$RESPONSE_BODY" | jq -r '.id')
-                echo "Created API with ID: $API_ID"
                 echo "::group::Step 2: Creating API Version"
                 CREATE_VERSION_BODY='{
                     "version": "'"$SPEC_VERSION"'",
@@ -136,8 +132,6 @@ jobs:
                         "content": '"$SPEC_CONTENT"'
                     }
                 }'
-                echo $CREATE_VERSION_BODY
-                echo "$BASE_URL/apis/$API_ID/versions"
                 VERSION_RESPONSE=$(http --print=hb -A bearer -a "$KONNECT_TOKEN" "$BASE_URL/apis/$API_ID/versions" <<< "$CREATE_VERSION_BODY")
                 STATUS_CODE=$(echo "$VERSION_RESPONSE" | head -n 1 | awk '{print $2}')
                 RESPONSE_BODY=$(echo "$VERSION_RESPONSE" | awk '/\{/{p=1} p')
