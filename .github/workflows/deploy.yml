@@ -28,15 +28,15 @@ jobs:
           echo "Installing jq..."
           sudo apt-get update && sudo apt-get install -y jq
           
-          # Verify curl installation
+          # Verify httpie installation
           echo "Verifying curl..."
-          if ! command -v curl &> /dev/null; then
-              sudo apt-get install -y curl
+          if ! command -v http &> /dev/null; then
+              sudo apt-get install -y httpie
           fi
           
           # Verify all tools
           echo "Verifying installed tools..."
-          curl --version || exit 1
+          http --version || exit 1
           yq --version || exit 1
           jq --version || exit 1
           echo "✅ All required tools are installed and verified"
@@ -92,8 +92,6 @@ jobs:
             # Uses environment variables: KONNECT_TOKEN, PORTAL_ID, REGION
             # Dependencies: curl, jq
 
-            set -e # Exit on any error
-
             # Validate environment variables
             if [ -z "$KONNECT_TOKEN" ] || [ -z "$PORTAL_ID" ] || [ -z "$REGION" ]; then
                 echo "::error::Missing required environment variables: KONNECT_TOKEN, PORTAL_ID, or REGION"
@@ -105,42 +103,12 @@ jobs:
             # Sample API data
             API_NAME=$(yq eval '.info.title' openapi.yml)
             API_VERSION=$(yq eval '.info.version' openapi.yml)
-            API_SLUG=$API_NAME | tr '[:upper:]' '[:lower:]' | tr ' ' '-'
+            API_SLUG=`echo $API_NAME | tr '[A-Z]' '[a-z]' | tr ' ' '-'`
             API_DESCRIPTION="A sample API for demonstration."
-
-            # Sample Documentation data
-            DOC_TITLE="Getting Started"
-            DOC_SLUG="getting-started"
-            DOC_CONTENT="# Getting Started with $API_NAME\n\nThis is a sample markdown document."
-            DOC_STATUS="published"
 
             # Sample OpenAPI Specification (minimal valid OAS 3.0)
             SPEC_VERSION=$(yq eval '.info.version' openapi.yml)
-            SPEC_CONTENT=$(cat openapi.yml)
-
-            # Publication data
-            PUBLISH_VISIBILITY="public"
-
-            # Function to make API calls with curl and handle responses
-            call_api() {
-                METHOD="$1"
-                ENDPOINT="$2"
-                BODY="$3"
-                echo "::group::API Call: $METHOD $ENDPOINT"
-                RESPONSE=$(curl -s -w "\n%{http_code}" -X "$METHOD" \
-                    -H "Authorization: Bearer $KONNECT_TOKEN" \
-                    -H "Content-Type: application/json" \
-                    --data "$BODY" \
-                    "$BASE_URL$ENDPOINT")
-                HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-                BODY_RESPONSE=$(echo "$RESPONSE" | sed -e '$d')
-                if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-                    echo "::error::HTTP $HTTP_CODE - $BODY_RESPONSE"
-                    exit 1
-                fi
-                echo "$BODY_RESPONSE"
-                echo "::endgroup::"
-            }
+            SPEC_CONTENT=$(yq -o json openapi.yml | jq -c . | jq @json)
 
             echo "::group::Step 1: Creating API"
             CREATE_API_BODY='{
@@ -149,44 +117,53 @@ jobs:
             "slug": "'"$API_SLUG"'",
             "description": "'"$API_DESCRIPTION"'"
             }'
-            API_RESPONSE=$(call_api "POST" "/apis" "$CREATE_API_BODY")
-            API_ID=$(echo "$API_RESPONSE" | jq -r '.id')
-            echo "API created with ID: $API_ID"
-            echo "::endgroup::"
+            RESPONSE=$(http --print=hb -A bearer -a "$KONNECT_TOKEN" "$BASE_URL/apis" <<< "$CREATE_API_BODY")
+            STATUS_CODE=$(echo "$RESPONSE" | head -n 1 | awk '{print $2}')
+            RESPONSE_BODY=$(echo "$RESPONSE" | awk '/\{/{p=1} p')
+            echo $RESPONSE
+            echo $STATUS_CODE
+            echo $RESPONSE_BODY
 
-            # echo "::group::Step 2: Adding API Documentation"
-            # CREATE_DOC_BODY='{
-            # "title": "'"$DOC_TITLE"'",
-            # "slug": "'"$DOC_SLUG"'",
-            # "status": "'"$DOC_STATUS"'",
-            # "content": "'"$DOC_CONTENT"'"
-            # }'
-            # DOC_RESPONSE=$(call_api "POST" "/apis/$API_ID/documents" "$CREATE_DOC_BODY")
-            # DOC_ID=$(echo "$DOC_RESPONSE" | jq -r '.id')
-            # echo "Documentation added with ID: $DOC_ID"
-            # echo "::endgroup::"
-
-            echo "::group::Step 3: Adding API Specification (Version)"
-            CREATE_VERSION_BODY='{
-            "version": "'"$SPEC_VERSION"'",
-            "spec": {
-                "content": '"$(echo "$SPEC_CONTENT" | jq -c .)"'
-            }
-            }'
-            VERSION_RESPONSE=$(call_api "POST" "/apis/$API_ID/versions" "$CREATE_VERSION_BODY")
-            VERSION_ID=$(echo "$VERSION_RESPONSE" | jq -r '.id')
-            echo "Version added with ID: $VERSION_ID"
-            echo "::endgroup::"
-
-            echo "::group::Step 4: Publishing API to Portal"
-            PUBLISH_BODY='{
-            "visibility": "'"$PUBLISH_VISIBILITY"'"
-            }'
-            PUBLISH_RESPONSE=$(call_api "PUT" "/apis/$API_ID/publications/$PORTAL_ID" "$PUBLISH_BODY")
-            echo "API published to Portal: $PUBLISH_RESPONSE"
-            echo "::endgroup::"
-
-            echo "All steps completed successfully!"
-            # Output the portal URL for verification
-            echo "✨ API Documentation is now published!"
-            echo "You can view it at: https://developer.apiprimer.com"
+            if [ "$STATUS_CODE" -eq 201 ]; then
+                echo "Request successful! Status code: $STATUS_CODE"
+                # Parse JSON response body using jq (if JSON)
+                API_ID=$(echo "$RESPONSE_BODY" | jq -r '.id')
+                echo "Created API with ID: $API_ID"
+                echo "::group::Step 2: Creating API Version"
+                CREATE_VERSION_BODY='{
+                    "version": "'"$SPEC_VERSION"'",
+                    "spec": {
+                        "content": '"$SPEC_CONTENT"'
+                    }
+                }'
+                echo $CREATE_VERSION_BODY
+                echo "$BASE_URL/apis/$API_ID/versions"
+                VERSION_RESPONSE=$(http --print=hb -A bearer -a "$KONNECT_TOKEN" "$BASE_URL/apis/$API_ID/versions" <<< "$CREATE_VERSION_BODY")
+                STATUS_CODE=$(echo "$VERSION_RESPONSE" | head -n 1 | awk '{print $2}')
+                RESPONSE_BODY=$(echo "$VERSION_RESPONSE" | awk '/\{/{p=1} p')
+                if [ "$STATUS_CODE" -eq 201 ]; then
+                  echo "Version added successfully! Status code: $STATUS_CODE"
+                  VERSION_ID=$(echo "$RESPONSE_BODY" | jq -r '.id')
+                  echo "::group::Step 3: Publishing API to Portal"
+                  PUBLISH_BODY='{
+                    "visibility": "public"
+                  }'
+                  PUBLISH_RESPONSE=$(http --print=hb -A bearer -a "$KONNECT_TOKEN" PUT "$BASE_URL/apis/$API_ID/publications/$PORTAL_ID" <<< "$PUBLISH_BODY")
+                  STATUS_CODE=$(echo "$PUBLISH_RESPONSE" | head -n 1 | awk '{print $2}')
+                  RESPONSE_BODY=$(echo "$PUBLISH_RESPONSE" | awk '/\{/{p=1} p')
+                  if [ "$STATUS_CODE" -eq 200 ]; then
+                    echo "API published to Portal successfully!"
+                    echo "You can view it at: https://developer.apiprimer.com"
+                    echo "::endgroup::"
+                  else
+                    echo "::error::Failed to publish API version. HTTP $STATUS_CODE - $RESPONSE_BODY"
+                    echo "::endgroup::"
+                  fi
+                else
+                  echo "::error::Failed to add version. HTTP $STATUS_CODE - $RESPONSE_BODY"
+                  echo "::endgroup::"
+                fi
+            else
+              echo "::error::Failed to add version. HTTP $STATUS_CODE - $RESPONSE_BODY"
+              echo "::endgroup::"
+            fi
