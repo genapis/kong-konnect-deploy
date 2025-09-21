@@ -100,7 +100,7 @@ jobs:
 
             BASE_URL="https://${REGION}.api.konghq.com/v3"
 
-            yq -i 'servers[0].url = "https://api.apiprimer.com"' openapi.yml
+            yq -i '.servers[0].url = "https://api.apiprimer.com"' openapi.yml
             # Sample API data
             API_NAME=$(yq eval '.info.title' openapi.yml)
             API_VERSION=$(yq eval '.info.version' openapi.yml)
